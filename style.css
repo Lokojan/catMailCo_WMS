@@ -108,9 +108,15 @@
 
   .action-bar{
     max-width:1280px; margin:16px auto 0; padding:0 28px;
-    display:flex; gap:10px; flex-wrap:wrap;
+    display:flex; gap:14px; flex-wrap:wrap;
   }
-  .btn-issue{background:var(--navy); box-shadow:0 2px 0 var(--navy-light);}
+  .action-bar .btn{
+    font-size:16px; padding:16px 30px; border-radius:11px; gap:10px;
+    box-shadow:0 3px 0 rgba(35,25,12,.25);
+  }
+  .action-bar .btn:hover{transform:translateY(-1px);}
+  .action-bar .btn:active{transform:translateY(2px); box-shadow:0 1px 0 rgba(35,25,12,.25);}
+  .btn-issue{background:var(--navy); box-shadow:0 3px 0 var(--navy-light);}
   .btn-issue:hover{background:var(--navy-light);}
 
   main{
@@ -210,15 +216,20 @@
   .filters select, .filters input[type=text]{
     padding:8px 10px; border-radius:7px; border:1px solid var(--paper-darker); background:#fff; font-size:13px;
   }
+  .filters input#filter-surname{width:150px;}
   .filters .chip-toggle{
-    display:flex; gap:6px; flex-wrap:wrap;
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(148px, 1fr));
+    gap:6px;
+    flex:1 1 100%;
   }
   .filters .chip-toggle + .chip-toggle{
     padding-left:10px; border-left:1px dashed var(--paper-darker);
   }
   .chip{
     border:1px solid var(--paper-darker); background:#fff; border-radius:999px; padding:6px 12px;
-    font-size:12.5px; color:var(--ink-soft); display:inline-flex; align-items:center; gap:5px;
+    font-size:12.5px; color:var(--ink-soft); display:flex; align-items:center; justify-content:center;
+    gap:5px; text-align:center; width:100%;
   }
   .chip.active{background:var(--navy); color:#fff; border-color:var(--navy);}
   .filters .spacer{flex:1;}
@@ -232,6 +243,7 @@
     border-left:5px solid var(--sage);
   }
   .box-card.issued{border-left-color:var(--sky); opacity:.75;}
+  .box-card.pending{border-left-color:var(--twine);}
   .box-card .who{display:flex; flex-direction:column;}
   .box-card .who .fio{font-family:var(--font-display); font-size:15.5px; color:var(--navy);}
   .box-card .who .fmt{font-size:12px; color:var(--ink-soft); font-family:var(--font-mono);}
@@ -243,6 +255,7 @@
   .status-badge{font-size:11.5px; font-weight:700; padding:4px 10px; border-radius:999px; justify-self:start;}
   .status-badge.stored{background:#e4efe0; color:var(--sage);}
   .status-badge.issued{background:#e2ecf3; color:var(--sky);}
+  .status-badge.pending{background:#fdf1dc; color:var(--twine);}
   .box-actions{display:flex; gap:6px; justify-self:end;}
   .icon-btn{
     background:var(--white-paper); border:1px solid var(--paper-darker); border-radius:7px; padding:7px 9px; font-size:14px;
@@ -374,7 +387,9 @@
     .row2, .row3{grid-template-columns:1fr;}
     .topbar{padding:14px 16px;}
     main{padding:16px 14px 50px;}
-    .action-bar{padding:0 14px;}
+    .action-bar{padding:0 14px; flex-direction:column;}
+    .action-bar .btn{width:100%; justify-content:center;}
+    .filters input#filter-surname{width:100%;}
     .issue-result-card{flex-direction:column; align-items:stretch;}
     .issue-result-card .issue-pick-btn{width:100%; justify-content:center;}
   }
