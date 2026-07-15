@@ -1,3 +1,19 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+import { getFirestore } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCXqPRPt_BKIjaH1My3QAE4vYgqq6TRaRs",
+  authDomain: "catwms-46c94.firebaseapp.com",
+  projectId: "catwms-46c94",
+  storageBucket: "catwms-46c94.firebasestorage.app",
+  messagingSenderId: "240887897192",
+  appId: "1:240887897192:web:411b5433fc12a37e0eafdd"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+console.log("Firebase подключен");
 (function(){
   "use strict";
 
