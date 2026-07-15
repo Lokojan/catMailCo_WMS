@@ -9,6 +9,32 @@
 </head>
 <body>
 
+<!-- LOGIN SCREEN -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-box">
+    <div class="login-brand">
+      <span class="paw">🐾</span>
+      <h1>Cat Mail Co.</h1>
+    </div>
+    <p class="login-sub">Войдите, чтобы попасть на склад</p>
+    <form id="login-form">
+      <div class="field">
+        <label>Логин</label>
+        <input type="text" id="login-username" required="" autocomplete="username" placeholder="например: murka">
+      </div>
+      <div class="field">
+        <label>Пароль</label>
+        <input type="password" id="login-password" required="" autocomplete="current-password">
+      </div>
+      <div class="login-error" id="login-error"></div>
+      <button type="submit" class="btn btn-primary login-submit">Войти</button>
+    </form>
+  </div>
+</div>
+
+<!-- APP (скрыто до входа) -->
+<div id="app-root" class="hidden">
+
 <header class="topbar">
   <div class="brand">
     <span class="paw">🐾</span>
@@ -19,14 +45,13 @@
   </div>
   <div class="search-wrap">
     <input type="text" id="global-search" placeholder="Поиск по имени, фамилии, формату…">
-    <button type="button" id="search-clear" class="search-clear" title="Очистить поиск">✕</button>
   </div>
   <div class="stats" id="stats-pills">
       <div class="stat-pill">📦 В хранении: <b>547</b></div>
-      <div class="stat-pill">📥 Принято сегодня: <b>0</b></div>
       <div class="stat-pill">✅ Выдано сегодня: <b>0</b></div>
     </div>
   <button class="btn btn-primary" id="open-add-modal">➕ Добавить коробку</button>
+  <button class="btn btn-ghost" id="logout-btn" title="Выйти">🚪 Выйти</button>
 </header>
 
 <nav class="tabs">
@@ -97,11 +122,11 @@
       <div class="row2">
         <div class="field">
           <label>Имя получателя</label>
-          <input type="text" id="f-name" placeholder="Мурка (необязательно, если известна фамилия)">
+          <input type="text" id="f-name" placeholder="Мурка" required="">
         </div>
         <div class="field">
-          <label>Фамилия</label>
-          <input type="text" id="f-surname" placeholder="Кузнецова" style="text-transform:uppercase;">
+          <label>Первая буква фамилии</label>
+          <input type="text" id="f-surname" maxlength="1" placeholder="К" required="" style="text-transform:uppercase;">
         </div>
       </div>
       <div class="row3">
@@ -116,13 +141,9 @@
         </div>
       </div>
       <div class="field">
-        <label>Условия хранения</label>
+        <label>Дополнительные условия</label>
         <div class="cond-grid" id="cond-grid"></div>
         <div class="suggest-box" id="suggest-box"></div>
-      </div>
-      <div class="field">
-        <label>Особые отметки</label>
-        <div class="cond-grid" id="cond-grid-extra"></div>
       </div>
       <div class="field">
         <label>Заметка (необязательно)</label>
@@ -137,6 +158,8 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+</div><!-- /app-root -->
 
 <script type="module" src="app.js"></script>
 
