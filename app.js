@@ -655,6 +655,131 @@ function initApp(){
   overlay.addEventListener('click', e=>{ if(e.target===overlay) closeModal(); });
   document.addEventListener('keydown', e=>{ if(e.key==='Escape' && !overlay.classList.contains('hidden')) closeModal(); });
 
+  /* ================= ISSUE MODAL (выдача посылки по словам клиента) ================= */
+  const issueOverlay = document.getElementById('issue-modal-overlay');
+  let issueConditions = new Set();
+
+  function populateIssueFormBits(){
+    const roomSel = document.getElementById('issue-f-room');
+    roomSel.innerHTML = '<option value="">Любая комната</option>' +
+      ROOMS.map(r=>`<option value="${r.id}">${r.icon} ${r.name}</option>`).join('');
+
+    const formatSel = document.getElementById('issue-f-format');
+    const usedFormats = [...new Set(boxes.map(b=>b.format).filter(Boolean))];
+    const allFormats = [...new Set([...FORMAT_DEFAULTS, ...usedFormats])];
+    formatSel.innerHTML = '<option value="">Любой формат</option>' +
+      allFormats.map(f=>`<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('');
+
+    const condGrid = document.getElementById('issue-cond-grid');
+    condGrid.innerHTML = [...CONDITIONS, ...CONDITIONS_EXTRA]
+      .map(c=>`<span class="cond-check" data-cond="${c.id}">${c.name}</span>`).join('');
+    condGrid.querySelectorAll('.cond-check').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const cid = el.dataset.cond;
+        const c = COND_MAP[cid];
+        if(issueConditions.has(cid)){
+          issueConditions.delete(cid);
+          el.classList.remove('on');
+          el.style.background = '';
+          el.style.borderColor = '';
+        }else{
+          issueConditions.add(cid);
+          el.classList.add('on');
+          el.style.background = c.color;
+          el.style.borderColor = c.color;
+        }
+        renderIssueResults();
+      });
+    });
+  }
+
+  // Ищет коробки в хранении по любому набору признаков, которые успел назвать клиент.
+  // Пустые поля просто игнорируются — фильтр применяется только по заполненным.
+  function renderIssueResults(){
+    const resultsEl = document.getElementById('issue-results');
+    const query = document.getElementById('issue-f-query').value.trim().toLowerCase();
+    const format = document.getElementById('issue-f-format').value;
+    const room = document.getElementById('issue-f-room').value;
+    const hasAnyFilter = !!(query || format || room || issueConditions.size>0);
+
+    if(!hasAnyFilter){
+      resultsEl.innerHTML = `<div class="empty-state"><span class="em">🔍</span>Укажите хотя бы один признак — имя, фамилию, формат, комнату или отметку — и здесь появятся подходящие посылки.</div>`;
+      return;
+    }
+
+    const matches = boxes.filter(b=>{
+      if(b.status!=='stored') return false;
+      if(room && b.room!==room) return false;
+      if(format && b.format!==format) return false;
+      if(issueConditions.size>0){
+        const conds = b.conditions || [];
+        for(const cid of issueConditions){ if(!conds.includes(cid)) return false; }
+      }
+      if(query){
+        const full = [b.name, b.surname].filter(Boolean).join(' ');
+        const hay = [b.name, b.surname, full, b.format, b.note].join(' ').toLowerCase();
+        if(!hay.includes(query)) return false;
+      }
+      return true;
+    }).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+
+    if(matches.length===0){
+      resultsEl.innerHTML = `<div class="empty-state"><span class="em">🐾</span>Ничего не нашлось. Попробуйте убрать один из признаков.</div>`;
+      return;
+    }
+
+    resultsEl.innerHTML = matches.map(b=>{
+      const room = ROOM_MAP[b.room] || {name:'—', icon:'❔'};
+      const condPills = (b.conditions||[]).map(cid=>{
+        const c = COND_MAP[cid];
+        return c ? `<span class="cond-pill" style="background:${c.color}">${c.name}</span>` : '';
+      }).join('');
+      return `
+        <div class="issue-result-card" data-id="${b.id}">
+          <div class="who">
+            <span class="fio">${formatFio(b)}</span>
+            <span class="fmt">${escapeHtml(b.format || 'формат не указан')} · ${room.icon} ${room.name}</span>
+          </div>
+          <div class="conditions">${condPills || '<span style="color:#a08e6f; font-size:12px;">без условий</span>'}</div>
+          <button type="button" class="btn btn-primary issue-pick-btn" data-id="${b.id}">📤 Выдать</button>
+        </div>`;
+    }).join('');
+
+    resultsEl.querySelectorAll('.issue-pick-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        issueBox(btn.dataset.id);
+        renderIssueResults();
+      });
+    });
+  }
+
+  function openIssueModal(){
+    populateIssueFormBits();
+    issueConditions = new Set();
+    document.getElementById('issue-f-query').value = '';
+    document.getElementById('issue-f-format').value = '';
+    document.getElementById('issue-f-room').value = '';
+    renderIssueResults();
+    issueOverlay.classList.remove('hidden');
+    setTimeout(()=>document.getElementById('issue-f-query').focus(), 50);
+  }
+  function closeIssueModal(){
+    issueOverlay.classList.add('hidden');
+  }
+
+  document.getElementById('open-issue-modal').addEventListener('click', openIssueModal);
+  document.getElementById('cancel-issue-modal').addEventListener('click', closeIssueModal);
+  issueOverlay.addEventListener('click', e=>{ if(e.target===issueOverlay) closeIssueModal(); });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape' && !issueOverlay.classList.contains('hidden')) closeIssueModal(); });
+
+  let issueQueryTimer;
+  document.getElementById('issue-f-query').addEventListener('input', ()=>{
+    clearTimeout(issueQueryTimer);
+    issueQueryTimer = setTimeout(renderIssueResults, 150);
+  });
+  document.getElementById('issue-f-format').addEventListener('change', renderIssueResults);
+  document.getElementById('issue-f-room').addEventListener('change', renderIssueResults);
+
   /* ================= TABS / VIEW ================= */
   function setView(view){
     state.view = view;
