@@ -52,7 +52,6 @@
       <div class="stat-pill">📥 Принято сегодня: <b>0</b></div>
       <div class="stat-pill">✅ Выдано сегодня: <b>0</b></div>
     </div>
-  <button class="btn btn-primary" id="open-add-modal">➕ Добавить коробку</button>
   <button class="btn btn-ghost" id="logout-btn" title="Выйти">🚪 Выйти</button>
 </header>
 
@@ -61,6 +60,11 @@
   <button class="tab-btn" data-view="list">📦 Все посылки</button>
   <button class="tab-btn" data-view="history">📜 Выдано</button>
 </nav>
+
+<div class="action-bar">
+  <button class="btn btn-primary" id="open-add-modal">➕ Добавить коробку</button>
+  <button class="btn btn-primary btn-issue" id="open-issue-modal">📤 Выдать посылку</button>
+</div>
 
 <main>
   <!-- ROOMS VIEW -->
@@ -164,6 +168,36 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ISSUE MODAL -->
+<div class="modal-overlay hidden" id="issue-modal-overlay">
+  <div class="modal modal-wide">
+    <h2>📤 Выдать посылку</h2>
+    <div class="sub">Укажите то, что успел сказать клиент — остальные поля можно не трогать.</div>
+    <div class="row2">
+      <div class="field">
+        <label>Имя / фамилия (можно одну букву)</label>
+        <input type="text" id="issue-f-query" placeholder="например: К или Кузнецова">
+      </div>
+      <div class="field">
+        <label>Формат коробки</label>
+        <select id="issue-f-format"></select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Комната</label>
+      <select id="issue-f-room"></select>
+    </div>
+    <div class="field">
+      <label>Условия хранения / отметки</label>
+      <div class="cond-grid" id="issue-cond-grid"></div>
+    </div>
+    <div class="issue-results" id="issue-results"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="cancel-issue-modal">Закрыть</button>
+    </div>
+  </div>
+</div>
 
 </div><!-- /app-root -->
 
