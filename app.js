@@ -1,7 +1,17 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
-alert("app.js загружен");
-import { getFirestore } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
-alert("app.js загружен");
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut
+} from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCXqPRPt_BKIjaH1My3QAE4vYgqq6TRaRs",
@@ -14,9 +24,72 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+
+// Документ, в котором хранится весь массив коробок
+const BOXES_DOC_REF = doc(db, "warehouse", "boxes");
 
 console.log("Firebase подключен");
-(function(){
+
+/* ================= AUTH: ЭКРАН ВХОДА ================= */
+const loginOverlay = document.getElementById('login-overlay');
+const appRoot = document.getElementById('app-root');
+const loginForm = document.getElementById('login-form');
+const loginError = document.getElementById('login-error');
+const logoutBtn = document.getElementById('logout-btn');
+
+let appInitialized = false; // чтобы initApp() не запускался повторно
+
+// Firebase Auth требует email-формат, но друзьям удобнее вводить просто логин.
+// Поэтому логин на лету превращается в "фейковый" email вида login@catmailco.local
+const FAKE_EMAIL_DOMAIN = 'catmailco.local';
+function usernameToFakeEmail(username){
+  const clean = username.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  return clean + '@' + FAKE_EMAIL_DOMAIN;
+}
+
+loginForm.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  loginError.textContent = '';
+  const username = document.getElementById('login-username').value;
+  const password = document.getElementById('login-password').value;
+  const email = usernameToFakeEmail(username);
+  const submitBtn = loginForm.querySelector('button[type=submit]');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Входим…';
+  try{
+    await signInWithEmailAndPassword(auth, email, password);
+    // дальше подхватит onAuthStateChanged
+  }catch(err){
+    loginError.textContent = 'Не удалось войти: неверный логин или пароль.';
+    console.error('Ошибка входа:', err);
+  }finally{
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Войти';
+  }
+});
+
+if(logoutBtn){
+  logoutBtn.addEventListener('click', ()=>{ signOut(auth); });
+}
+
+onAuthStateChanged(auth, (user)=>{
+  if(user){
+    loginOverlay.classList.add('hidden');
+    appRoot.classList.remove('hidden');
+    if(!appInitialized){
+      appInitialized = true;
+      initApp();
+    }
+  }else{
+    loginOverlay.classList.remove('hidden');
+    appRoot.classList.add('hidden');
+    loginForm.reset();
+  }
+});
+
+/* ================= ОСНОВНОЕ ПРИЛОЖЕНИЕ (запускается только после входа) ================= */
+function initApp(){
   "use strict";
 
   /* ================= DATA DEFINITIONS ================= */
@@ -60,17 +133,7 @@ console.log("Firebase подключен");
     {id:'light',         name:'Хранение на свету',  color:'#c9922b'},
     {id:'twine',         name:'Шпагат',              color:'#8a6b3c'},
   ];
-  // Вторая категория меток — особые отметки на коробках
-  const CONDITIONS_EXTRA = [
-    {id:'scratches', name:'Царапины', color:'#8a7f74'},
-    {id:'lavender',  name:'Лаванда',  color:'#7e6bab'},
-    {id:'toad',       name:'Жаба',     color:'#4f7942'},
-    {id:'clover',     name:'Клевер',   color:'#4c9a4c'},
-    {id:'bites',      name:'Укусы',    color:'#a1483a'},
-    {id:'lemon',      name:'Лимон',    color:'#c9a227'},
-    {id:'duck',       name:'Утка',     color:'#e0932e'},
-  ];
-  const COND_MAP = Object.fromEntries([...CONDITIONS, ...CONDITIONS_EXTRA].map(c=>[c.id,c]));
+  const COND_MAP = Object.fromEntries(CONDITIONS.map(c=>[c.id,c]));
 
   // Условие -> подсказка о комнате
   const SUGGEST_ROOM = {
@@ -80,37 +143,70 @@ console.log("Firebase подключен");
 
   const FORMAT_DEFAULTS = ['Куб','Полукуб','Четверть куба','Большой куб','Вертикальная','С ручками','Подарочная коробка','Письмо','Перевязанный мешок'];
 
-  // Данные, перенесённые из файла «Посылки.xlsx» при первом запуске приложения.
-  const SEED_BOXES = [];
-
-  const STORAGE_KEY = 'cat_mail_co_boxes_v1';
-
   /* ================= STATE ================= */
-  let boxes = loadBoxes();
+  let boxes = [];
+  let firestoreLoaded = false;   // получили ли мы уже первые данные из Firestore
+  let isSavingRemotely = false;  // защита от повторного запуска сохранения поверх ещё не завершённого
+
   let state = {
     view:'rooms',
     filterRoom:null,
     filterCond:null,
-    filterFormat:null,
     filterStatus:'stored', // stored | all
     search:'',
     editingId:null,
     formConditions:new Set()
   };
 
-  function loadBoxes(){
-    try{
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if(raw) return JSON.parse(raw);
-      // Первый запуск в этом браузере — заполняем склад данными из Посылки.xlsx
-      return [];
-    }catch(e){ return []; }
-  }
-  function saveBoxes(){
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(boxes));
-  }
   function uid(){
     return 'b_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  }
+
+  /* ================= FIRESTORE SYNC ================= */
+
+  // Записываем текущий массив boxes в Firestore.
+  // Вызывается после любого локального изменения (CRUD/import/clear).
+  async function saveBoxes(){
+    isSavingRemotely = true;
+    try{
+      await setDoc(BOXES_DOC_REF, { list: boxes, updatedAt: Date.now() });
+    }catch(err){
+      console.error('Ошибка записи в Firestore:', err);
+      showToast('⚠️ Не удалось сохранить: ' + err.message);
+    }finally{
+      isSavingRemotely = false;
+    }
+  }
+
+  // Живая подписка: срабатывает при первом запуске и при любом
+  // изменении документа (в том числе с других устройств/вкладок).
+  function subscribeToBoxes(){
+    onSnapshot(BOXES_DOC_REF, (snap)=>{
+      if(snap.exists()){
+        const data = snap.data();
+        boxes = Array.isArray(data.list) ? data.list : [];
+      } else {
+        boxes = [];
+      }
+      firestoreLoaded = true;
+      renderAll();
+    }, (err)=>{
+      console.error('Ошибка подписки на Firestore:', err);
+      showToast('⚠️ Нет связи с базой данных: ' + err.message);
+    });
+  }
+
+  // Если документа ещё не существует (первый запуск проекта) — создаём его пустым.
+  async function ensureBoxesDocExists(){
+    try{
+      const snap = await getDoc(BOXES_DOC_REF);
+      if(!snap.exists()){
+        await setDoc(BOXES_DOC_REF, { list: [], updatedAt: Date.now() });
+      }
+    }catch(err){
+      console.error('Ошибка инициализации документа Firestore:', err);
+      showToast('⚠️ Не удалось создать документ в базе: ' + err.message);
+    }
   }
 
   /* ================= HELPERS ================= */
@@ -123,16 +219,6 @@ console.log("Firebase подключен");
     if(!iso) return false;
     const d = new Date(iso), t = new Date();
     return d.getFullYear()===t.getFullYear() && d.getMonth()===t.getMonth() && d.getDate()===t.getDate();
-  }
-  function formatFio(b){
-    const name = (b.name||'').trim();
-    const surname = (b.surname||'').trim();
-    if(name && surname){
-      return surname.length<=2 ? `${escapeHtml(name)} ${escapeHtml(surname)}.` : `${escapeHtml(name)} ${escapeHtml(surname)}`;
-    }
-    if(name) return escapeHtml(name);
-    if(surname) return escapeHtml(surname);
-    return '—';
   }
   function escapeHtml(str){
     return String(str).replace(/[&<>"']/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
@@ -152,10 +238,8 @@ console.log("Firebase подключен");
   function renderStats(){
     const stored = boxes.filter(b=>b.status==='stored').length;
     const issuedToday = boxes.filter(b=>b.status==='issued' && isToday(b.issuedAt)).length;
-    const receivedToday = boxes.filter(b=>isToday(b.createdAt)).length;
     document.getElementById('stats-pills').innerHTML = `
       <div class="stat-pill">📦 В хранении: <b>${stored}</b></div>
-      <div class="stat-pill">📥 Принято сегодня: <b>${receivedToday}</b></div>
       <div class="stat-pill">✅ Выдано сегодня: <b>${issuedToday}</b></div>
     `;
   }
@@ -242,16 +326,10 @@ console.log("Firebase подключен");
   /* ================= RENDER: FILTERS ================= */
   function renderFilters(){
     const wrap = document.getElementById('filters');
-    const usedFormats = [...new Set(boxes.map(b=>b.format).filter(Boolean))];
-    const allFormats = [...new Set([...FORMAT_DEFAULTS, ...usedFormats])];
     wrap.innerHTML = `
       <select id="filter-room">
         <option value="">Все комнаты</option>
         ${ROOMS.map(r=>`<option value="${r.id}" ${state.filterRoom===r.id?'selected':''}>${r.icon} ${r.name}</option>`).join('')}
-      </select>
-      <select id="filter-format">
-        <option value="">Все форматы коробки</option>
-        ${allFormats.map(f=>`<option value="${escapeHtml(f)}" ${state.filterFormat===f?'selected':''}>${escapeHtml(f)}</option>`).join('')}
       </select>
       <select id="filter-status">
         <option value="stored" ${state.filterStatus==='stored'?'selected':''}>В хранении</option>
@@ -260,22 +338,16 @@ console.log("Firebase подключен");
       <div class="chip-toggle" id="filter-cond-chips">
         ${CONDITIONS.map(c=>`<span class="chip ${state.filterCond===c.id?'active':''}" data-cond="${c.id}">${c.name}</span>`).join('')}
       </div>
-      <div class="chip-toggle" id="filter-cond-chips-extra">
-        ${CONDITIONS_EXTRA.map(c=>`<span class="chip ${state.filterCond===c.id?'active':''}" data-cond="${c.id}">${c.name}</span>`).join('')}
-      </div>
       <div class="spacer"></div>
       <button type="button" class="clear-filters" id="clear-filters-btn">Сбросить фильтры</button>
     `;
     document.getElementById('filter-room').addEventListener('change', e=>{
       state.filterRoom = e.target.value || null; renderList();
     });
-    document.getElementById('filter-format').addEventListener('change', e=>{
-      state.filterFormat = e.target.value || null; renderList();
-    });
     document.getElementById('filter-status').addEventListener('change', e=>{
       state.filterStatus = e.target.value; renderList();
     });
-    wrap.querySelectorAll('#filter-cond-chips .chip, #filter-cond-chips-extra .chip').forEach(chip=>{
+    wrap.querySelectorAll('#filter-cond-chips .chip').forEach(chip=>{
       chip.addEventListener('click', ()=>{
         const c = chip.dataset.cond;
         state.filterCond = state.filterCond===c ? null : c;
@@ -283,9 +355,8 @@ console.log("Firebase подключен");
       });
     });
     document.getElementById('clear-filters-btn').addEventListener('click', ()=>{
-      state.filterRoom=null; state.filterCond=null; state.filterFormat=null; state.filterStatus='stored'; state.search='';
+      state.filterRoom=null; state.filterCond=null; state.filterStatus='stored'; state.search='';
       document.getElementById('global-search').value='';
-      updateSearchClearBtn();
       renderFilters(); renderList();
     });
   }
@@ -293,15 +364,11 @@ console.log("Firebase подключен");
   /* ================= RENDER: LIST ================= */
   function matchesFilters(b){
     if(state.filterRoom && b.room !== state.filterRoom) return false;
-    if(state.filterFormat && b.format !== state.filterFormat) return false;
     if(state.filterCond && !(b.conditions||[]).includes(state.filterCond)) return false;
     if(state.filterStatus==='stored' && b.status!=='stored') return false;
     if(state.search){
       const q = state.search.toLowerCase();
-      // Ищем и по отдельности, и по полному "имя фамилия" — так находятся посылки,
-      // у которых указана только фамилия (или только имя).
-      const full = [b.name, b.surname].filter(Boolean).join(' ');
-      const hay = [b.name, b.surname, full, b.format, b.note].join(' ').toLowerCase();
+      const hay = [b.name, b.surname, b.format, b.note].join(' ').toLowerCase();
       if(!hay.includes(q)) return false;
     }
     return true;
@@ -309,6 +376,12 @@ console.log("Firebase подключен");
 
   function renderList(){
     const listEl = document.getElementById('box-list');
+
+    if(!firestoreLoaded){
+      listEl.innerHTML = `<div class="empty-state"><span class="em">⏳</span>Загрузка данных из базы…</div>`;
+      return;
+    }
+
     const filtered = boxes.filter(matchesFilters).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
     if(filtered.length===0){
       listEl.innerHTML = `<div class="empty-state"><span class="em">🐾</span>Тут пока пусто. Похоже, все посылки разобраны или не найдено совпадений.</div>`;
@@ -323,7 +396,7 @@ console.log("Firebase подключен");
       return `
         <div class="box-card ${b.status==='issued'?'issued':''}" data-id="${b.id}">
           <div class="who">
-            <span class="fio">${formatFio(b)}</span>
+            <span class="fio">${escapeHtml(b.name)} ${escapeHtml(b.surname||'')}.</span>
             <span class="fmt">${escapeHtml(b.format || 'формат не указан')}</span>
           </div>
           <div class="room-cell">${room.icon} ${room.name}</div>
@@ -354,6 +427,12 @@ console.log("Firebase подключен");
   /* ================= RENDER: HISTORY ================= */
   function renderHistory(){
     const el = document.getElementById('history-list');
+
+    if(!firestoreLoaded){
+      el.innerHTML = `<div class="empty-state"><span class="em">⏳</span>Загрузка данных из базы…</div>`;
+      return;
+    }
+
     const issued = boxes.filter(b=>b.status==='issued').sort((a,b)=>(b.issuedAt||'').localeCompare(a.issuedAt||''));
     if(issued.length===0){
       el.innerHTML = `<div class="empty-state"><span class="em">📜</span>Пока никто ничего не забирал.</div>`;
@@ -363,7 +442,7 @@ console.log("Firebase подключен");
       const room = ROOM_MAP[b.room] || {name:'—', icon:'❔'};
       return `
         <div class="history-row">
-          <span class="fio">${formatFio(b)}</span>
+          <span class="fio">${escapeHtml(b.name)} ${escapeHtml(b.surname||'')}.</span>
           <span>${room.icon} ${room.name}</span>
           <span>${escapeHtml(b.format||'—')}</span>
           <span class="when">${fmtDate(b.issuedAt)}</span>
@@ -383,7 +462,7 @@ console.log("Firebase подключен");
     b.issuedAt = new Date().toISOString();
     saveBoxes();
     renderAll();
-    showToast(`Посылка для «${formatFio(b)}» выдана`, ()=>{ returnBox(id); });
+    showToast(`Посылка для «${b.name} ${b.surname}.» выдана`, ()=>{ returnBox(id); });
   }
   function returnBox(id){
     const b = boxes.find(x=>x.id===id);
@@ -397,7 +476,7 @@ console.log("Firebase подключен");
   function deleteBox(id){
     const b = boxes.find(x=>x.id===id);
     if(!b) return;
-    if(!confirm(`Удалить карточку «${formatFio(b)}»? Это необратимо.`)) return;
+    if(!confirm(`Удалить карточку «${b.name} ${b.surname}.»? Это необратимо.`)) return;
     boxes = boxes.filter(x=>x.id!==id);
     saveBoxes();
     renderAll();
@@ -419,23 +498,19 @@ console.log("Firebase подключен");
 
     const condGrid = document.getElementById('cond-grid');
     condGrid.innerHTML = CONDITIONS.map(c=>`<span class="cond-check" data-cond="${c.id}">${c.name}</span>`).join('');
-    const condGridExtra = document.getElementById('cond-grid-extra');
-    condGridExtra.innerHTML = CONDITIONS_EXTRA.map(c=>`<span class="cond-check" data-cond="${c.id}">${c.name}</span>`).join('');
-    [condGrid, condGridExtra].forEach(grid=>{
-      grid.querySelectorAll('.cond-check').forEach(el=>{
-        el.addEventListener('click', ()=>{
-          const cid = el.dataset.cond;
-          if(state.formConditions.has(cid)) state.formConditions.delete(cid);
-          else state.formConditions.add(cid);
-          refreshCondUI();
-          refreshSuggestBox();
-        });
+    condGrid.querySelectorAll('.cond-check').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const cid = el.dataset.cond;
+        if(state.formConditions.has(cid)) state.formConditions.delete(cid);
+        else state.formConditions.add(cid);
+        refreshCondUI();
+        refreshSuggestBox();
       });
     });
   }
 
   function refreshCondUI(){
-    document.querySelectorAll('#cond-grid .cond-check, #cond-grid-extra .cond-check').forEach(el=>{
+    document.querySelectorAll('#cond-grid .cond-check').forEach(el=>{
       const cid = el.dataset.cond;
       const c = COND_MAP[cid];
       if(state.formConditions.has(cid)){
@@ -509,10 +584,7 @@ console.log("Firebase подключен");
     const room = document.getElementById('f-room').value;
     const format = document.getElementById('f-format').value.trim();
     const note = document.getElementById('f-note').value.trim();
-    if((!name && !surname) || !room){
-      showToast('Укажите хотя бы имя или фамилию');
-      return;
-    }
+    if(!name || !surname || !room){ return; }
 
     if(state.editingId){
       const b = boxes.find(x=>x.id===state.editingId);
@@ -557,13 +629,7 @@ console.log("Firebase подключен");
 
   /* ================= SEARCH ================= */
   let searchTimer;
-  const searchInput = document.getElementById('global-search');
-  const searchClearBtn = document.getElementById('search-clear');
-  function updateSearchClearBtn(){
-    searchClearBtn.classList.toggle('show', !!searchInput.value);
-  }
-  searchInput.addEventListener('input', e=>{
-    updateSearchClearBtn();
+  document.getElementById('global-search').addEventListener('input', e=>{
     clearTimeout(searchTimer);
     searchTimer = setTimeout(()=>{
       state.search = e.target.value.trim();
@@ -571,14 +637,6 @@ console.log("Firebase подключен");
       if(state.view==='list') renderList();
     }, 180);
   });
-  searchClearBtn.addEventListener('click', ()=>{
-    searchInput.value = '';
-    state.search = '';
-    updateSearchClearBtn();
-    if(state.view==='list') renderList();
-    searchInput.focus();
-  });
-  updateSearchClearBtn();
 
   /* ================= EXPORT / IMPORT / CLEAR ================= */
   document.getElementById('export-btn').addEventListener('click', ()=>{
@@ -600,7 +658,7 @@ console.log("Firebase подключен");
       try{
         const data = JSON.parse(reader.result);
         if(!Array.isArray(data)) throw new Error('bad format');
-        if(confirm(`Импортировать ${data.length} записей? Это заменит текущие данные.`)){
+        if(confirm(`Импортировать ${data.length} записей? Это заменит текущие данные для ВСЕХ пользователей.`)){
           boxes = data;
           saveBoxes();
           renderAll();
@@ -614,7 +672,7 @@ console.log("Firebase подключен");
     reader.readAsText(file);
   });
   document.getElementById('clear-btn').addEventListener('click', ()=>{
-    if(confirm('Удалить ВСЕ данные о коробках без возможности восстановления?')){
+    if(confirm('Удалить ВСЕ данные о коробках без возможности восстановления? Это затронет ВСЕХ пользователей.')){
       boxes = [];
       saveBoxes();
       renderAll();
@@ -645,6 +703,11 @@ console.log("Firebase подключен");
     if(state.view==='list'){ renderFilters(); renderList(); }
     if(state.view==='history') renderHistory();
   }
+
+  // Первичная отрисовка (пустое состояние, пока грузятся данные)
   renderMap();
   renderStats();
-})();
+
+  // Подключаемся к Firestore: создаём документ при первом запуске и подписываемся на изменения
+  ensureBoxesDocExists().then(subscribeToBoxes);
+}
