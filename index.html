@@ -45,9 +45,11 @@
   </div>
   <div class="search-wrap">
     <input type="text" id="global-search" placeholder="Поиск по имени, фамилии, формату…">
+    <button type="button" id="search-clear" class="search-clear" title="Очистить поиск">✕</button>
   </div>
   <div class="stats" id="stats-pills">
       <div class="stat-pill">📦 В хранении: <b>547</b></div>
+      <div class="stat-pill">📥 Принято сегодня: <b>0</b></div>
       <div class="stat-pill">✅ Выдано сегодня: <b>0</b></div>
     </div>
   <button class="btn btn-primary" id="open-add-modal">➕ Добавить коробку</button>
@@ -105,7 +107,7 @@
   </section>
 
   <div class="footer-tools">
-    <span>Данные хранятся локально в этом браузере.</span>
+    <span>Данные хранятся в общей базе склада и видны всем, кто вошёл в аккаунт.</span>
     <button id="export-btn">⬇️ Экспорт JSON</button>
     <button id="import-btn">⬆️ Импорт JSON</button>
     <input type="file" id="import-file" accept="application/json" style="display:none;">
@@ -122,11 +124,11 @@
       <div class="row2">
         <div class="field">
           <label>Имя получателя</label>
-          <input type="text" id="f-name" placeholder="Мурка" required="">
+          <input type="text" id="f-name" placeholder="Мурка (необязательно, если известна фамилия)">
         </div>
         <div class="field">
-          <label>Первая буква фамилии</label>
-          <input type="text" id="f-surname" maxlength="1" placeholder="К" required="" style="text-transform:uppercase;">
+          <label>Фамилия</label>
+          <input type="text" id="f-surname" placeholder="Кузнецова" style="text-transform:uppercase;">
         </div>
       </div>
       <div class="row3">
@@ -141,9 +143,13 @@
         </div>
       </div>
       <div class="field">
-        <label>Дополнительные условия</label>
+        <label>Условия хранения</label>
         <div class="cond-grid" id="cond-grid"></div>
         <div class="suggest-box" id="suggest-box"></div>
+      </div>
+      <div class="field">
+        <label>Особые отметки</label>
+        <div class="cond-grid" id="cond-grid-extra"></div>
       </div>
       <div class="field">
         <label>Заметка (необязательно)</label>
