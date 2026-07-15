@@ -151,6 +151,12 @@ function initApp(){
     heavy:'heavy', fragile:'fragile'
   };
 
+  // Комната -> тег, который проставляется автоматически при выборе этой комнаты
+  const ROOM_TO_COND = {
+    fridge:'cold', sunny:'light', hot:'warm', dark:'dark',
+    fragile:'fragile', heavy:'heavy'
+  };
+
   const FORMAT_DEFAULTS = ['Куб','Полукуб','Четверть куба','Большой куб','Вертикальная','С ручками','Подарочная коробка','Письмо','Перевязанный мешок'];
 
   /* ================= STATE ================= */
@@ -163,7 +169,8 @@ function initApp(){
     filterRoom:null,
     filterCond:null,
     filterFormat:null,
-    filterStatus:'stored', // stored | all
+    filterSurname:null,
+    filterStatus:'stored', // stored | pending | all
     search:'',
     editingId:null,
     formConditions:new Set()
@@ -259,7 +266,7 @@ function initApp(){
   function renderStats(){
     const stored = boxes.filter(b=>b.status==='stored').length;
     const issuedToday = boxes.filter(b=>b.status==='issued' && isToday(b.issuedAt)).length;
-    const receivedToday = boxes.filter(b=>isToday(b.createdAt)).length;
+    const receivedToday = boxes.filter(b=>b.status!=='pending' && isToday(b.createdAt)).length;
     document.getElementById('stats-pills').innerHTML = `
       <div class="stat-pill">📦 В хранении: <b>${stored}</b></div>
       <div class="stat-pill">📥 Принято сегодня: <b>${receivedToday}</b></div>
@@ -352,6 +359,7 @@ function initApp(){
     const usedFormats = [...new Set(boxes.map(b=>b.format).filter(Boolean))];
     const allFormats = [...new Set([...FORMAT_DEFAULTS, ...usedFormats])];
     wrap.innerHTML = `
+      <input type="text" id="filter-surname" value="${escapeHtml(state.filterSurname||'')}" placeholder="Фамилия на букву…">
       <select id="filter-room">
         <option value="">Все комнаты</option>
         ${ROOMS.map(r=>`<option value="${r.id}" ${state.filterRoom===r.id?'selected':''}>${r.icon} ${r.name}</option>`).join('')}
@@ -362,6 +370,7 @@ function initApp(){
       </select>
       <select id="filter-status">
         <option value="stored" ${state.filterStatus==='stored'?'selected':''}>В хранении</option>
+        <option value="pending" ${state.filterStatus==='pending'?'selected':''}>Не принята</option>
         <option value="all" ${state.filterStatus==='all'?'selected':''}>Все статусы</option>
       </select>
       <div class="chip-toggle" id="filter-cond-chips">
@@ -373,6 +382,9 @@ function initApp(){
       <div class="spacer"></div>
       <button type="button" class="clear-filters" id="clear-filters-btn">Сбросить фильтры</button>
     `;
+    document.getElementById('filter-surname').addEventListener('input', e=>{
+      state.filterSurname = e.target.value.trim() || null; renderList();
+    });
     document.getElementById('filter-room').addEventListener('change', e=>{
       state.filterRoom = e.target.value || null; renderList();
     });
@@ -390,7 +402,7 @@ function initApp(){
       });
     });
     document.getElementById('clear-filters-btn').addEventListener('click', ()=>{
-      state.filterRoom=null; state.filterCond=null; state.filterFormat=null; state.filterStatus='stored'; state.search='';
+      state.filterRoom=null; state.filterCond=null; state.filterFormat=null; state.filterSurname=null; state.filterStatus='stored'; state.search='';
       document.getElementById('global-search').value='';
       updateSearchClearBtn();
       renderFilters(); renderList();
@@ -402,7 +414,9 @@ function initApp(){
     if(state.filterRoom && b.room !== state.filterRoom) return false;
     if(state.filterFormat && b.format !== state.filterFormat) return false;
     if(state.filterCond && !(b.conditions||[]).includes(state.filterCond)) return false;
+    if(state.filterSurname && !(b.surname||'').toLowerCase().startsWith(state.filterSurname.toLowerCase())) return false;
     if(state.filterStatus==='stored' && b.status!=='stored') return false;
+    if(state.filterStatus==='pending' && b.status!=='pending') return false;
     if(state.search){
       const q = state.search.toLowerCase();
       // Ищем и по отдельности, и по полному "имя фамилия" — так находятся посылки,
@@ -434,16 +448,18 @@ function initApp(){
         return c ? `<span class="cond-pill" style="background:${c.color}">${c.name}</span>` : '';
       }).join('');
       return `
-        <div class="box-card ${b.status==='issued'?'issued':''}" data-id="${b.id}">
+        <div class="box-card ${b.status==='issued'?'issued':''} ${b.status==='pending'?'pending':''}" data-id="${b.id}">
           <div class="who">
             <span class="fio">${formatFio(b)}</span>
             <span class="fmt">${escapeHtml(b.format || 'формат не указан')}</span>
           </div>
           <div class="room-cell">${room.icon} ${room.name}</div>
           <div class="conditions">${condPills || '<span style="color:#a08e6f; font-size:12px;">без условий</span>'}</div>
-          <span class="status-badge ${b.status}">${b.status==='stored'?'В хранении':'Выдана'}</span>
+          <span class="status-badge ${b.status}">${b.status==='stored'?'В хранении':b.status==='pending'?'Не принята':'Выдана'}</span>
           <div class="box-actions">
-            ${b.status==='stored' ? `<button class="icon-btn" data-action="issue" title="Выдать NPC">📤</button>` : `<button class="icon-btn" data-action="return" title="Вернуть на склад">↩️</button>`}
+            ${b.status==='stored' ? `<button class="icon-btn" data-action="issue" title="Выдать">📤</button>`
+              : b.status==='pending' ? `<button class="icon-btn" data-action="receive" title="Принять на склад">✅</button>`
+              : `<button class="icon-btn" data-action="return" title="Вернуть на склад">↩️</button>`}
             <button class="icon-btn" data-action="edit" title="Изменить">✏️</button>
             <button class="icon-btn danger" data-action="delete" title="Удалить">🗑️</button>
           </div>
@@ -456,6 +472,7 @@ function initApp(){
         btn.addEventListener('click', ()=>{
           const action = btn.dataset.action;
           if(action==='issue') issueBox(id);
+          else if(action==='receive') receiveBox(id);
           else if(action==='return') returnBox(id);
           else if(action==='edit') openModal(id);
           else if(action==='delete') deleteBox(id);
@@ -504,6 +521,16 @@ function initApp(){
     renderAll();
     showToast(`Посылка для «${formatFio(b)}» выдана`, ()=>{ returnBox(id); });
   }
+  function receiveBox(id){
+    const b = boxes.find(x=>x.id===id);
+    if(!b) return;
+    b.status='stored';
+    saveBoxes();
+    renderAll();
+    showToast(`Посылка для «${formatFio(b)}» принята на склад`, ()=>{
+      b.status='pending'; saveBoxes(); renderAll();
+    });
+  }
   function returnBox(id){
     const b = boxes.find(x=>x.id===id);
     if(!b) return;
@@ -526,6 +553,17 @@ function initApp(){
   /* ================= MODAL / FORM ================= */
   const overlay = document.getElementById('modal-overlay');
   const form = document.getElementById('box-form');
+
+  // При выборе комнаты автоматически проставляем связанный с ней тег
+  // (только для комнат из ROOM_TO_COND — остальные не трогаем).
+  document.getElementById('f-room').addEventListener('change', e=>{
+    const cid = ROOM_TO_COND[e.target.value];
+    if(cid && !state.formConditions.has(cid)){
+      state.formConditions.add(cid);
+      refreshCondUI();
+      refreshSuggestBox();
+    }
+  });
 
   function populateStaticFormBits(){
     const roomSel = document.getElementById('f-room');
@@ -605,11 +643,13 @@ function initApp(){
       document.getElementById('f-room').value = b.room;
       document.getElementById('f-format').value = b.format || '';
       document.getElementById('f-note').value = b.note || '';
+      document.getElementById('f-status').value = b.status==='pending' ? 'pending' : 'stored';
       state.formConditions = new Set(b.conditions || []);
     }else{
       form.reset();
       state.formConditions = new Set();
       document.getElementById('f-room').value = presetRoom || ROOMS[0].id;
+      document.getElementById('f-status').value = 'stored';
     }
     refreshCondUI();
     refreshSuggestBox();
@@ -628,6 +668,7 @@ function initApp(){
     const room = document.getElementById('f-room').value;
     const format = document.getElementById('f-format').value.trim();
     const note = document.getElementById('f-note').value.trim();
+    const status = document.getElementById('f-status').value; // stored | pending
     if((!name && !surname) || !room){
       showToast('Укажите хотя бы имя или фамилию');
       return;
@@ -635,15 +676,18 @@ function initApp(){
 
     if(state.editingId){
       const b = boxes.find(x=>x.id===state.editingId);
-      Object.assign(b, {name, surname, room, format, note, conditions:[...state.formConditions]});
+      const patch = {name, surname, room, format, note, conditions:[...state.formConditions]};
+      // Статус уже выданной посылки через эту форму не трогаем — для этого есть кнопка "Вернуть".
+      if(b.status !== 'issued'){ patch.status = status; }
+      Object.assign(b, patch);
       showToast('Изменения сохранены');
     }else{
       boxes.push({
         id:uid(), name, surname, room, format, note,
         conditions:[...state.formConditions],
-        status:'stored', createdAt:new Date().toISOString(), issuedAt:null
+        status, createdAt:new Date().toISOString(), issuedAt:null
       });
-      showToast('Коробка добавлена на склад');
+      showToast(status==='pending' ? 'Коробка добавлена как «не принята»' : 'Коробка добавлена на склад');
     }
     saveBoxes();
     closeModal();
