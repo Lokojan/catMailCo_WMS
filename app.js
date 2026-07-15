@@ -1,5 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+alert("app.js загружен");
 import { getFirestore } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
+alert("app.js загружен");
 
 const firebaseConfig = {
   apiKey: "AIzaSyCXqPRPt_BKIjaH1My3QAE4vYgqq6TRaRs",
