@@ -1,7 +1,11 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
-alert("app.js загружен");
-import { getFirestore } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
-alert("app.js загружен");
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCXqPRPt_BKIjaH1My3QAE4vYgqq6TRaRs",
@@ -15,7 +19,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
+// Документ, в котором хранится весь массив коробок
+const BOXES_DOC_REF = doc(db, "warehouse", "boxes");
+
 console.log("Firebase подключен");
+
 (function(){
   "use strict";
 
@@ -70,13 +78,11 @@ console.log("Firebase подключен");
 
   const FORMAT_DEFAULTS = ['Куб','Полукуб','Четверть куба','Большой куб','Вертикальная','С ручками','Подарочная коробка','Письмо','Перевязанный мешок'];
 
-  // Данные, перенесённые из файла «Посылки.xlsx» при первом запуске приложения.
-  const SEED_BOXES = [];
-
-  const STORAGE_KEY = 'cat_mail_co_boxes_v1';
-
   /* ================= STATE ================= */
-  let boxes = loadBoxes();
+  let boxes = [];
+  let firestoreLoaded = false;   // получили ли мы уже первые данные из Firestore
+  let isSavingRemotely = false;  // защита от повторного запуска сохранения поверх ещё не завершённого
+
   let state = {
     view:'rooms',
     filterRoom:null,
@@ -87,19 +93,55 @@ console.log("Firebase подключен");
     formConditions:new Set()
   };
 
-  function loadBoxes(){
-    try{
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if(raw) return JSON.parse(raw);
-      // Первый запуск в этом браузере — заполняем склад данными из Посылки.xlsx
-      return [];
-    }catch(e){ return []; }
-  }
-  function saveBoxes(){
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(boxes));
-  }
   function uid(){
     return 'b_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  }
+
+  /* ================= FIRESTORE SYNC ================= */
+
+  // Записываем текущий массив boxes в Firestore.
+  // Вызывается после любого локального изменения (CRUD/import/clear).
+  async function saveBoxes(){
+    isSavingRemotely = true;
+    try{
+      await setDoc(BOXES_DOC_REF, { list: boxes, updatedAt: Date.now() });
+    }catch(err){
+      console.error('Ошибка записи в Firestore:', err);
+      showToast('⚠️ Не удалось сохранить: ' + err.message);
+    }finally{
+      isSavingRemotely = false;
+    }
+  }
+
+  // Живая подписка: срабатывает при первом запуске и при любом
+  // изменении документа (в том числе с других устройств/вкладок).
+  function subscribeToBoxes(){
+    onSnapshot(BOXES_DOC_REF, (snap)=>{
+      if(snap.exists()){
+        const data = snap.data();
+        boxes = Array.isArray(data.list) ? data.list : [];
+      } else {
+        boxes = [];
+      }
+      firestoreLoaded = true;
+      renderAll();
+    }, (err)=>{
+      console.error('Ошибка подписки на Firestore:', err);
+      showToast('⚠️ Нет связи с базой данных: ' + err.message);
+    });
+  }
+
+  // Если документа ещё не существует (первый запуск проекта) — создаём его пустым.
+  async function ensureBoxesDocExists(){
+    try{
+      const snap = await getDoc(BOXES_DOC_REF);
+      if(!snap.exists()){
+        await setDoc(BOXES_DOC_REF, { list: [], updatedAt: Date.now() });
+      }
+    }catch(err){
+      console.error('Ошибка инициализации документа Firestore:', err);
+      showToast('⚠️ Не удалось создать документ в базе: ' + err.message);
+    }
   }
 
   /* ================= HELPERS ================= */
@@ -269,6 +311,12 @@ console.log("Firebase подключен");
 
   function renderList(){
     const listEl = document.getElementById('box-list');
+
+    if(!firestoreLoaded){
+      listEl.innerHTML = `<div class="empty-state"><span class="em">⏳</span>Загрузка данных из базы…</div>`;
+      return;
+    }
+
     const filtered = boxes.filter(matchesFilters).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
     if(filtered.length===0){
       listEl.innerHTML = `<div class="empty-state"><span class="em">🐾</span>Тут пока пусто. Похоже, все посылки разобраны или не найдено совпадений.</div>`;
@@ -314,6 +362,12 @@ console.log("Firebase подключен");
   /* ================= RENDER: HISTORY ================= */
   function renderHistory(){
     const el = document.getElementById('history-list');
+
+    if(!firestoreLoaded){
+      el.innerHTML = `<div class="empty-state"><span class="em">⏳</span>Загрузка данных из базы…</div>`;
+      return;
+    }
+
     const issued = boxes.filter(b=>b.status==='issued').sort((a,b)=>(b.issuedAt||'').localeCompare(a.issuedAt||''));
     if(issued.length===0){
       el.innerHTML = `<div class="empty-state"><span class="em">📜</span>Пока никто ничего не забирал.</div>`;
@@ -539,7 +593,7 @@ console.log("Firebase подключен");
       try{
         const data = JSON.parse(reader.result);
         if(!Array.isArray(data)) throw new Error('bad format');
-        if(confirm(`Импортировать ${data.length} записей? Это заменит текущие данные.`)){
+        if(confirm(`Импортировать ${data.length} записей? Это заменит текущие данные для ВСЕХ пользователей.`)){
           boxes = data;
           saveBoxes();
           renderAll();
@@ -553,7 +607,7 @@ console.log("Firebase подключен");
     reader.readAsText(file);
   });
   document.getElementById('clear-btn').addEventListener('click', ()=>{
-    if(confirm('Удалить ВСЕ данные о коробках без возможности восстановления?')){
+    if(confirm('Удалить ВСЕ данные о коробках без возможности восстановления? Это затронет ВСЕХ пользователей.')){
       boxes = [];
       saveBoxes();
       renderAll();
@@ -584,6 +638,12 @@ console.log("Firebase подключен");
     if(state.view==='list'){ renderFilters(); renderList(); }
     if(state.view==='history') renderHistory();
   }
+
+  // Первичная отрисовка (пустое состояние, пока грузятся данные)
   renderMap();
   renderStats();
+
+  // Подключаемся к Firestore: создаём документ при первом запуске и подписываемся на изменения
+  ensureBoxesDocExists().then(subscribeToBoxes);
+
 })();
