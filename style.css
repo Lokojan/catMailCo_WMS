@@ -55,8 +55,17 @@
     padding:6px 14px;
     font-size:13px;
     display:flex; align-items:center; gap:6px;
+    color:inherit; font-family:var(--font-body);
   }
   .stat-pill b{font-family:var(--font-display); font-size:15px; color:#ffe9b8;}
+  .stat-pill-clickable{cursor:pointer; transition:background .12s ease, transform .08s ease;}
+  .stat-pill-clickable:hover{background:rgba(255,255,255,.18);}
+  .stat-pill-clickable:active{transform:translateY(1px);}
+  .stat-pill-clickable.has-dups{
+    background:rgba(178,58,50,.28); border-color:rgba(178,58,50,.55);
+  }
+  .stat-pill-clickable.has-dups b{color:#ffd3ce;}
+  .stat-pill-clickable.has-dups:hover{background:rgba(178,58,50,.4);}
 
   .search-wrap{position:relative;}
   .search-wrap input{
@@ -360,6 +369,35 @@
   .issue-result-card .conditions{display:flex; flex-wrap:wrap; gap:5px; flex:1;}
   .issue-result-card .issue-pick-btn{padding:8px 14px; font-size:12.5px; white-space:nowrap;}
 
+  .dup-list{margin-top:6px; max-height:440px; overflow-y:auto; display:flex; flex-direction:column; gap:16px;}
+  .dup-list .empty-state{padding:26px 10px; font-size:13px;}
+  .dup-list .empty-state .em{font-size:30px;}
+  .dup-group{
+    background:var(--paper); border-radius:12px; padding:14px 14px 12px;
+    border:1px dashed var(--twine);
+  }
+  .dup-group-head{
+    display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+    margin-bottom:10px;
+  }
+  .dup-group-title{font-family:var(--font-display); font-size:14px; color:var(--navy);}
+  .dup-dismiss-btn{
+    background:transparent; border:none; color:var(--ink-soft); font-size:12px;
+    text-decoration:underline; font-weight:600;
+  }
+  .dup-dismiss-btn:hover{color:var(--stamp);}
+  .dup-group-cards{display:flex; flex-direction:column; gap:8px;}
+  .dup-card{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    background:var(--white-paper); border-radius:10px; padding:10px 14px;
+    border-left:5px solid var(--sky);
+  }
+  .dup-card .who{display:flex; flex-direction:column; gap:1px; min-width:130px;}
+  .dup-card .who .fio{font-family:var(--font-display); font-size:14.5px; color:var(--navy);}
+  .dup-card .who .fmt{font-size:11px; color:var(--ink-soft); font-family:var(--font-mono);}
+  .dup-card .conditions{display:flex; flex-wrap:wrap; gap:5px; flex:1;}
+  .dup-card .dup-pick-btn{padding:7px 12px; font-size:12px; white-space:nowrap;}
+
   .modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:20px;}
   .btn-secondary{background:var(--paper-dark); color:var(--ink);}
   .btn-secondary:hover{background:var(--paper-darker);}
@@ -392,4 +430,6 @@
     .filters input#filter-surname{width:100%;}
     .issue-result-card{flex-direction:column; align-items:stretch;}
     .issue-result-card .issue-pick-btn{width:100%; justify-content:center;}
+    .dup-card{flex-direction:column; align-items:stretch;}
+    .dup-card .dup-pick-btn{width:100%; justify-content:center;}
   }
