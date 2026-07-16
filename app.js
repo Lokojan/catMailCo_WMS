@@ -267,10 +267,12 @@ function initApp(){
     const stored = boxes.filter(b=>b.status==='stored').length;
     const issuedToday = boxes.filter(b=>b.status==='issued' && isToday(b.issuedAt)).length;
     const receivedToday = boxes.filter(b=>b.status!=='pending' && isToday(b.createdAt)).length;
+    const dupCount = computeDuplicateGroups().length;
     document.getElementById('stats-pills').innerHTML = `
       <div class="stat-pill">📦 В хранении: <b>${stored}</b></div>
       <div class="stat-pill">📥 Принято сегодня: <b>${receivedToday}</b></div>
       <div class="stat-pill">✅ Выдано сегодня: <b>${issuedToday}</b></div>
+      <button type="button" class="stat-pill stat-pill-clickable ${dupCount>0?'has-dups':''}" id="dup-stat-pill" title="Проверить похожие посылки">🧩 Дублей: <b>${dupCount}</b></button>
     `;
   }
 
@@ -550,6 +552,48 @@ function initApp(){
     showToast('Карточка удалена');
   }
 
+  /* ================= ДУБЛИ ================= */
+  // Дублем считаем совпадение имени + фамилии + формата коробки среди
+  // ещё не выданных посылок (выданные уже не мешают на складе).
+  // dismissedDupKeys хранит группы, которые вручную отметили «это не дубли» —
+  // сбрасывается при обновлении страницы.
+  let dismissedDupKeys = new Set();
+
+  function computeDuplicateGroups(){
+    const map = new Map();
+    boxes.forEach(b=>{
+      if(b.status==='issued') return;
+      const key = [
+        (b.name||'').trim().toLowerCase(),
+        (b.surname||'').trim().toLowerCase(),
+        (b.format||'').trim().toLowerCase()
+      ].join('|');
+      if(key==='||') return; // совсем пустая карточка — пропускаем
+      if(dismissedDupKeys.has(key)) return;
+      if(!map.has(key)) map.set(key, []);
+      map.get(key).push(b);
+    });
+    return [...map.entries()]
+      .filter(([,list])=>list.length>1)
+      .map(([key,list])=>({key, list}));
+  }
+
+  function resolveDuplicateGroup(keepId, groupIds){
+    const toDelete = groupIds.filter(id=>id!==keepId);
+    if(!confirm(`Оставить выбранную карточку, а остальные (${toDelete.length}) удалить? Это необратимо.`)) return;
+    boxes = boxes.filter(b=>!toDelete.includes(b.id));
+    saveBoxes();
+    renderAll();
+    renderDuplicatesModal();
+    showToast('Дубли убраны, актуальная карточка сохранена');
+  }
+
+  function dismissDuplicateGroup(key){
+    dismissedDupKeys.add(key);
+    renderStats();
+    renderDuplicatesModal();
+  }
+
   /* ================= MODAL / FORM ================= */
   const overlay = document.getElementById('modal-overlay');
   const form = document.getElementById('box-form');
@@ -823,6 +867,73 @@ function initApp(){
   });
   document.getElementById('issue-f-format').addEventListener('change', renderIssueResults);
   document.getElementById('issue-f-room').addEventListener('change', renderIssueResults);
+
+  /* ================= DUPLICATES MODAL ================= */
+  const duplicatesOverlay = document.getElementById('duplicates-modal-overlay');
+
+  function renderDuplicatesModal(){
+    const el = document.getElementById('duplicates-list');
+    const groups = computeDuplicateGroups();
+
+    if(groups.length===0){
+      el.innerHTML = `<div class="empty-state"><span class="em">✨</span>Дублей не найдено — все карточки уникальны.</div>`;
+      return;
+    }
+
+    el.innerHTML = groups.map(({key, list})=>{
+      const ids = list.map(b=>b.id).join(',');
+      const cards = list.map(b=>{
+        const room = ROOM_MAP[b.room] || {name:'—', icon:'❔'};
+        const condPills = (b.conditions||[]).map(cid=>{
+          const c = COND_MAP[cid];
+          return c ? `<span class="cond-pill" style="background:${c.color}">${c.name}</span>` : '';
+        }).join('');
+        return `
+          <div class="dup-card">
+            <div class="who">
+              <span class="fio">${formatFio(b)}</span>
+              <span class="fmt">${escapeHtml(b.format || 'формат не указан')} · ${room.icon} ${room.name}</span>
+              <span class="fmt">Добавлена: ${fmtDate(b.createdAt)}</span>
+            </div>
+            <div class="conditions">${condPills || '<span style="color:#a08e6f; font-size:12px;">без условий</span>'}</div>
+            <span class="status-badge ${b.status}">${b.status==='stored'?'В хранении':b.status==='pending'?'Не принята':'Выдана'}</span>
+            <button type="button" class="btn btn-primary dup-pick-btn" data-id="${b.id}" data-group="${ids}">✅ Это актуальная</button>
+          </div>`;
+      }).join('');
+      return `
+        <div class="dup-group">
+          <div class="dup-group-head">
+            <span class="dup-group-title">Похожие карточки (${list.length})</span>
+            <button type="button" class="dup-dismiss-btn" data-key="${escapeHtml(key)}">Это не дубли — пропустить</button>
+          </div>
+          <div class="dup-group-cards">${cards}</div>
+        </div>`;
+    }).join('');
+
+    el.querySelectorAll('.dup-pick-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        resolveDuplicateGroup(btn.dataset.id, btn.dataset.group.split(','));
+      });
+    });
+    el.querySelectorAll('.dup-dismiss-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>dismissDuplicateGroup(btn.dataset.key));
+    });
+  }
+
+  function openDuplicatesModal(){
+    renderDuplicatesModal();
+    duplicatesOverlay.classList.remove('hidden');
+  }
+  function closeDuplicatesModal(){
+    duplicatesOverlay.classList.add('hidden');
+  }
+
+  document.getElementById('stats-pills').addEventListener('click', e=>{
+    if(e.target.closest('#dup-stat-pill')) openDuplicatesModal();
+  });
+  document.getElementById('cancel-duplicates-modal').addEventListener('click', closeDuplicatesModal);
+  duplicatesOverlay.addEventListener('click', e=>{ if(e.target===duplicatesOverlay) closeDuplicatesModal(); });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape' && !duplicatesOverlay.classList.contains('hidden')) closeDuplicatesModal(); });
 
   /* ================= TABS / VIEW ================= */
   function setView(view){
