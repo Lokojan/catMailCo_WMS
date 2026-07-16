@@ -28,6 +28,8 @@ const auth = getAuth(app);
 
 // Документ, в котором хранится весь массив коробок
 const BOXES_DOC_REF = doc(db, "warehouse", "boxes");
+// Документ с ключами групп дублей, которые вручную отметили «это не дубли»
+const DISMISSED_DUPES_DOC_REF = doc(db, "warehouse", "dismissedDuplicates");
 
 console.log("Firebase подключен");
 
@@ -167,7 +169,7 @@ function initApp(){
   let state = {
     view:'rooms',
     filterRoom:null,
-    filterCond:null,
+    filterConds:new Set(),
     filterFormat:null,
     filterSurname:null,
     filterStatus:'stored', // stored | pending | all
@@ -224,6 +226,42 @@ function initApp(){
     }catch(err){
       console.error('Ошибка инициализации документа Firestore:', err);
       showToast('⚠️ Не удалось создать документ в базе: ' + err.message);
+    }
+  }
+
+  // Сохраняем список пропущенных групп дублей — общий для всех, кто вошёл в аккаунт.
+  async function saveDismissedDupes(){
+    try{
+      await setDoc(DISMISSED_DUPES_DOC_REF, { keys: [...dismissedDupKeys], updatedAt: Date.now() });
+    }catch(err){
+      console.error('Ошибка записи пропущенных дублей в Firestore:', err);
+      showToast('⚠️ Не удалось сохранить: ' + err.message);
+    }
+  }
+
+  function subscribeToDismissedDupes(){
+    onSnapshot(DISMISSED_DUPES_DOC_REF, (snap)=>{
+      if(snap.exists()){
+        const data = snap.data();
+        dismissedDupKeys = new Set(Array.isArray(data.keys) ? data.keys : []);
+      } else {
+        dismissedDupKeys = new Set();
+      }
+      renderStats();
+      if(!duplicatesOverlay.classList.contains('hidden')) renderDuplicatesModal();
+    }, (err)=>{
+      console.error('Ошибка подписки на пропущенные дубли:', err);
+    });
+  }
+
+  async function ensureDismissedDupesDocExists(){
+    try{
+      const snap = await getDoc(DISMISSED_DUPES_DOC_REF);
+      if(!snap.exists()){
+        await setDoc(DISMISSED_DUPES_DOC_REF, { keys: [], updatedAt: Date.now() });
+      }
+    }catch(err){
+      console.error('Ошибка инициализации документа пропущенных дублей:', err);
     }
   }
 
@@ -376,10 +414,10 @@ function initApp(){
         <option value="all" ${state.filterStatus==='all'?'selected':''}>Все статусы</option>
       </select>
       <div class="chip-toggle" id="filter-cond-chips">
-        ${CONDITIONS.map(c=>`<span class="chip ${state.filterCond===c.id?'active':''}" data-cond="${c.id}">${c.name}</span>`).join('')}
+        ${CONDITIONS.map(c=>`<span class="chip ${state.filterConds.has(c.id)?'active':''}" data-cond="${c.id}">${c.name}</span>`).join('')}
       </div>
       <div class="chip-toggle" id="filter-cond-chips-extra">
-        ${CONDITIONS_EXTRA.map(c=>`<span class="chip ${state.filterCond===c.id?'active':''}" data-cond="${c.id}">${c.name}</span>`).join('')}
+        ${CONDITIONS_EXTRA.map(c=>`<span class="chip ${state.filterConds.has(c.id)?'active':''}" data-cond="${c.id}">${c.name}</span>`).join('')}
       </div>
       <div class="spacer"></div>
       <button type="button" class="clear-filters" id="clear-filters-btn">Сбросить фильтры</button>
@@ -399,12 +437,13 @@ function initApp(){
     wrap.querySelectorAll('#filter-cond-chips .chip, #filter-cond-chips-extra .chip').forEach(chip=>{
       chip.addEventListener('click', ()=>{
         const c = chip.dataset.cond;
-        state.filterCond = state.filterCond===c ? null : c;
+        if(state.filterConds.has(c)) state.filterConds.delete(c);
+        else state.filterConds.add(c);
         renderFilters(); renderList();
       });
     });
     document.getElementById('clear-filters-btn').addEventListener('click', ()=>{
-      state.filterRoom=null; state.filterCond=null; state.filterFormat=null; state.filterSurname=null; state.filterStatus='stored'; state.search='';
+      state.filterRoom=null; state.filterConds=new Set(); state.filterFormat=null; state.filterSurname=null; state.filterStatus='stored'; state.search='';
       document.getElementById('global-search').value='';
       updateSearchClearBtn();
       renderFilters(); renderList();
@@ -415,7 +454,10 @@ function initApp(){
   function matchesFilters(b){
     if(state.filterRoom && b.room !== state.filterRoom) return false;
     if(state.filterFormat && b.format !== state.filterFormat) return false;
-    if(state.filterCond && !(b.conditions||[]).includes(state.filterCond)) return false;
+    if(state.filterConds.size>0){
+      const conds = b.conditions || [];
+      for(const cid of state.filterConds){ if(!conds.includes(cid)) return false; }
+    }
     if(state.filterSurname && !(b.surname||'').toLowerCase().startsWith(state.filterSurname.toLowerCase())) return false;
     if(state.filterStatus==='stored' && b.status!=='stored') return false;
     if(state.filterStatus==='pending' && b.status!=='pending') return false;
@@ -556,7 +598,7 @@ function initApp(){
   // Дублем считаем совпадение имени + фамилии + формата коробки среди
   // ещё не выданных посылок (выданные уже не мешают на складе).
   // dismissedDupKeys хранит группы, которые вручную отметили «это не дубли» —
-  // сбрасывается при обновлении страницы.
+  // хранится в Firestore, общее для всех, кто вошёл в аккаунт, переживает обновление страницы.
   let dismissedDupKeys = new Set();
 
   function computeDuplicateGroups(){
@@ -590,6 +632,7 @@ function initApp(){
 
   function dismissDuplicateGroup(key){
     dismissedDupKeys.add(key);
+    saveDismissedDupes();
     renderStats();
     renderDuplicatesModal();
   }
@@ -1051,4 +1094,5 @@ function initApp(){
 
   // Подключаемся к Firestore: создаём документ при первом запуске и подписываемся на изменения
   ensureBoxesDocExists().then(subscribeToBoxes);
+  ensureDismissedDupesDocExists().then(subscribeToDismissedDupes);
 }
