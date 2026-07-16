@@ -2,8 +2,14 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebas
 import {
   getFirestore,
   doc,
+  collection,
   getDoc,
+  getDocs,
   setDoc,
+  updateDoc,
+  deleteDoc,
+  writeBatch,
+  arrayUnion,
   onSnapshot
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
 import {
@@ -26,8 +32,11 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// Документ, в котором хранится весь массив коробок
-const BOXES_DOC_REF = doc(db, "warehouse", "boxes");
+// Старый документ (до переезда на отдельные документы) — нужен только для одноразовой миграции.
+const LEGACY_BOXES_DOC_REF = doc(db, "warehouse", "boxes");
+// Новое хранилище: у каждой коробки — свой документ. Правки разных коробок
+// больше никогда не перетирают друг друга, даже если их вносят одновременно.
+const BOXES_COLLECTION_REF = collection(db, "boxes");
 // Документ с ключами групп дублей, которые вручную отметили «это не дубли»
 const DISMISSED_DUPES_DOC_REF = doc(db, "warehouse", "dismissedDuplicates");
 
@@ -164,7 +173,6 @@ function initApp(){
   /* ================= STATE ================= */
   let boxes = [];
   let firestoreLoaded = false;   // получили ли мы уже первые данные из Firestore
-  let isSavingRemotely = false;  // защита от повторного запуска сохранения поверх ещё не завершённого
 
   let state = {
     view:'rooms',
@@ -184,30 +192,56 @@ function initApp(){
 
   /* ================= FIRESTORE SYNC ================= */
 
-  // Записываем текущий массив boxes в Firestore.
-  // Вызывается после любого локального изменения (CRUD/import/clear).
-  async function saveBoxes(){
-    isSavingRemotely = true;
+  // Общий обработчик ошибок сохранения — используется во всех операциях с коробками.
+  function handleSaveError(err){
+    console.error('Ошибка записи в Firestore:', err);
+    showToast('⚠️ Не удалось сохранить: ' + err.message);
+  }
+
+  // Добавляет новую коробку как отдельный документ.
+  function addBoxDoc(box){
+    const {id, ...data} = box;
+    return setDoc(doc(BOXES_COLLECTION_REF, id), data).catch(handleSaveError);
+  }
+  // Частично обновляет только переданные поля одной коробки — не трогает остальные документы
+  // и не затирает поля, которые в этот же момент мог поменять кто-то другой.
+  function updateBoxDoc(id, patch){
+    return updateDoc(doc(BOXES_COLLECTION_REF, id), patch).catch(handleSaveError);
+  }
+  function deleteBoxDoc(id){
+    return deleteDoc(doc(BOXES_COLLECTION_REF, id)).catch(handleSaveError);
+  }
+  // Полная замена всей базы (импорт JSON / очистка склада) — единственные операции,
+  // которым действительно нужно перезаписать всё разом.
+  async function replaceAllBoxes(newList){
     try{
-      await setDoc(BOXES_DOC_REF, { list: boxes, updatedAt: Date.now() });
+      const existing = await getDocs(BOXES_COLLECTION_REF);
+      const ops = [
+        ...existing.docs.map(d=>({type:'delete', ref:d.ref})),
+        ...newList.map(item=>{
+          const {id, ...data} = item;
+          return {type:'set', ref:doc(BOXES_COLLECTION_REF, id || uid()), data};
+        })
+      ];
+      // Пишем пачками по 450 операций — лимит Firestore batch 500.
+      for(let i=0; i<ops.length; i+=450){
+        const batch = writeBatch(db);
+        ops.slice(i, i+450).forEach(op=>{
+          if(op.type==='delete') batch.delete(op.ref);
+          else batch.set(op.ref, op.data);
+        });
+        await batch.commit();
+      }
     }catch(err){
-      console.error('Ошибка записи в Firestore:', err);
-      showToast('⚠️ Не удалось сохранить: ' + err.message);
-    }finally{
-      isSavingRemotely = false;
+      handleSaveError(err);
     }
   }
 
-  // Живая подписка: срабатывает при первом запуске и при любом
-  // изменении документа (в том числе с других устройств/вкладок).
+  // Живая подписка на коллекцию коробок: срабатывает при первом запуске и при
+  // любом изменении (в том числе с других устройств/вкладок), приходят только дельты.
   function subscribeToBoxes(){
-    onSnapshot(BOXES_DOC_REF, (snap)=>{
-      if(snap.exists()){
-        const data = snap.data();
-        boxes = Array.isArray(data.list) ? data.list : [];
-      } else {
-        boxes = [];
-      }
+    onSnapshot(BOXES_COLLECTION_REF, (snap)=>{
+      boxes = snap.docs.map(d=>({id:d.id, ...d.data()}));
       firestoreLoaded = true;
       renderAll();
     }, (err)=>{
@@ -216,23 +250,44 @@ function initApp(){
     });
   }
 
-  // Если документа ещё не существует (первый запуск проекта) — создаём его пустым.
-  async function ensureBoxesDocExists(){
+  // Одноразовая миграция со старой схемы (один документ с массивом) на новую
+  // (отдельный документ на каждую коробку). Срабатывает только если старые данные
+  // ещё не перенесены — безопасно вызывать при каждом запуске.
+  async function migrateLegacyBoxesIfNeeded(){
     try{
-      const snap = await getDoc(BOXES_DOC_REF);
-      if(!snap.exists()){
-        await setDoc(BOXES_DOC_REF, { list: [], updatedAt: Date.now() });
+      const legacySnap = await getDoc(LEGACY_BOXES_DOC_REF);
+      if(!legacySnap.exists()) return;
+      const legacyData = legacySnap.data();
+      const legacyList = Array.isArray(legacyData.list) ? legacyData.list : [];
+      if(legacyData.migrated || legacyList.length===0) return;
+
+      const currentSnap = await getDocs(BOXES_COLLECTION_REF);
+      if(!currentSnap.empty) {
+        // В новой коллекции уже что-то есть — миграцию, видимо, уже сделал кто-то другой.
+        await setDoc(LEGACY_BOXES_DOC_REF, {...legacyData, migrated:true}, {merge:true});
+        return;
       }
+
+      for(let i=0; i<legacyList.length; i+=450){
+        const batch = writeBatch(db);
+        legacyList.slice(i, i+450).forEach(item=>{
+          const {id, ...data} = item;
+          batch.set(doc(BOXES_COLLECTION_REF, id || uid()), data);
+        });
+        await batch.commit();
+      }
+      await setDoc(LEGACY_BOXES_DOC_REF, {list:[], migrated:true, migratedAt:Date.now()}, {merge:true});
+      console.log(`Перенесено ${legacyList.length} коробок в новую схему хранения.`);
     }catch(err){
-      console.error('Ошибка инициализации документа Firestore:', err);
-      showToast('⚠️ Не удалось создать документ в базе: ' + err.message);
+      console.error('Ошибка миграции старых данных:', err);
     }
   }
 
-  // Сохраняем список пропущенных групп дублей — общий для всех, кто вошёл в аккаунт.
-  async function saveDismissedDupes(){
+  // Добавляем ключ пропущенной группы дублей атомарно (arrayUnion) — так параллельные
+  // изменения с других вкладок/устройств не затирают друг друга при одновременном сохранении.
+  async function saveDismissedDupe(key){
     try{
-      await setDoc(DISMISSED_DUPES_DOC_REF, { keys: [...dismissedDupKeys], updatedAt: Date.now() });
+      await updateDoc(DISMISSED_DUPES_DOC_REF, { keys: arrayUnion(key), updatedAt: Date.now() });
     }catch(err){
       console.error('Ошибка записи пропущенных дублей в Firestore:', err);
       showToast('⚠️ Не удалось сохранить: ' + err.message);
@@ -561,7 +616,7 @@ function initApp(){
     if(!b) return;
     b.status='issued';
     b.issuedAt = new Date().toISOString();
-    saveBoxes();
+    updateBoxDoc(id, {status:'issued', issuedAt:b.issuedAt});
     renderAll();
     showToast(`Посылка для «${formatFio(b)}» выдана`, ()=>{ returnBox(id); });
   }
@@ -569,10 +624,10 @@ function initApp(){
     const b = boxes.find(x=>x.id===id);
     if(!b) return;
     b.status='stored';
-    saveBoxes();
+    updateBoxDoc(id, {status:'stored'});
     renderAll();
     showToast(`Посылка для «${formatFio(b)}» принята на склад`, ()=>{
-      b.status='pending'; saveBoxes(); renderAll();
+      b.status='pending'; updateBoxDoc(id, {status:'pending'}); renderAll();
     });
   }
   function returnBox(id){
@@ -580,7 +635,7 @@ function initApp(){
     if(!b) return;
     b.status='stored';
     b.issuedAt=null;
-    saveBoxes();
+    updateBoxDoc(id, {status:'stored', issuedAt:null});
     renderAll();
     showToast('Посылка возвращена на склад');
   }
@@ -589,7 +644,7 @@ function initApp(){
     if(!b) return;
     if(!confirm(`Удалить карточку «${formatFio(b)}»? Это необратимо.`)) return;
     boxes = boxes.filter(x=>x.id!==id);
-    saveBoxes();
+    deleteBoxDoc(id);
     renderAll();
     showToast('Карточка удалена');
   }
@@ -624,7 +679,7 @@ function initApp(){
     const toDelete = groupIds.filter(id=>id!==keepId);
     if(!confirm(`Оставить выбранную карточку, а остальные (${toDelete.length}) удалить? Это необратимо.`)) return;
     boxes = boxes.filter(b=>!toDelete.includes(b.id));
-    saveBoxes();
+    toDelete.forEach(id=>deleteBoxDoc(id));
     renderAll();
     renderDuplicatesModal();
     showToast('Дубли убраны, актуальная карточка сохранена');
@@ -632,7 +687,7 @@ function initApp(){
 
   function dismissDuplicateGroup(key){
     dismissedDupKeys.add(key);
-    saveDismissedDupes();
+    saveDismissedDupe(key);
     renderStats();
     renderDuplicatesModal();
   }
@@ -767,16 +822,18 @@ function initApp(){
       // Статус уже выданной посылки через эту форму не трогаем — для этого есть кнопка "Вернуть".
       if(b.status !== 'issued'){ patch.status = status; }
       Object.assign(b, patch);
+      updateBoxDoc(state.editingId, patch);
       showToast('Изменения сохранены');
     }else{
-      boxes.push({
+      const newBox = {
         id:uid(), name, surname, room, format, note,
         conditions:[...state.formConditions],
         status, createdAt:new Date().toISOString(), issuedAt:null
-      });
+      };
+      boxes.push(newBox);
+      addBoxDoc(newBox);
       showToast(status==='pending' ? 'Коробка добавлена как «не принята»' : 'Коробка добавлена на склад');
     }
-    saveBoxes();
     closeModal();
     renderAll();
   });
@@ -1044,7 +1101,7 @@ function initApp(){
         if(!Array.isArray(data)) throw new Error('bad format');
         if(confirm(`Импортировать ${data.length} записей? Это заменит текущие данные для ВСЕХ пользователей.`)){
           boxes = data;
-          saveBoxes();
+          replaceAllBoxes(data);
           renderAll();
           showToast('Данные импортированы');
         }
@@ -1058,7 +1115,7 @@ function initApp(){
   document.getElementById('clear-btn').addEventListener('click', ()=>{
     if(confirm('Удалить ВСЕ данные о коробках без возможности восстановления? Это затронет ВСЕХ пользователей.')){
       boxes = [];
-      saveBoxes();
+      replaceAllBoxes([]);
       renderAll();
       showToast('Склад полностью очищен');
     }
@@ -1092,7 +1149,8 @@ function initApp(){
   renderMap();
   renderStats();
 
-  // Подключаемся к Firestore: создаём документ при первом запуске и подписываемся на изменения
-  ensureBoxesDocExists().then(subscribeToBoxes);
+  // Подключаемся к Firestore: один раз переносим старые данные (если ещё не перенесены)
+  // и подписываемся на изменения.
+  migrateLegacyBoxesIfNeeded().then(subscribeToBoxes);
   ensureDismissedDupesDocExists().then(subscribeToDismissedDupes);
 }
