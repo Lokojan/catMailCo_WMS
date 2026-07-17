@@ -44,7 +44,7 @@
     </div>
   </div>
   <div class="search-wrap">
-    <input type="text" id="global-search" placeholder="Поиск по имени, фамилии, формату…">
+    <input type="text" id="global-search" list="fio-suggestions" placeholder="Поиск по имени, фамилии, формату…">
     <button type="button" id="search-clear" class="search-clear" title="Очистить поиск">✕</button>
   </div>
   <div class="stats" id="stats-pills">
@@ -64,6 +64,7 @@
 <div class="action-bar">
   <button class="btn btn-primary" id="open-add-modal">➕ Добавить коробку</button>
   <button class="btn btn-primary btn-issue" id="open-issue-modal">📤 Выдать посылку</button>
+  <button class="btn btn-primary btn-stats" id="open-stats-modal">📊 Статистика ПВЗ</button>
 </div>
 
 <main>
@@ -128,11 +129,11 @@
       <div class="row2">
         <div class="field">
           <label>Имя получателя</label>
-          <input type="text" id="f-name" placeholder="Мурка (необязательно, если известна фамилия)">
+          <input type="text" id="f-name" list="name-suggestions" placeholder="Мурка (необязательно, если известна фамилия)">
         </div>
         <div class="field">
           <label>Фамилия</label>
-          <input type="text" id="f-surname" placeholder="Кузнецова" style="text-transform:uppercase;">
+          <input type="text" id="f-surname" list="surname-suggestions" placeholder="Кузнецова" style="text-transform:uppercase;">
         </div>
       </div>
       <div class="row3">
@@ -144,6 +145,9 @@
           <label>Формат коробки</label>
           <input type="text" id="f-format" list="format-suggestions" placeholder="Средняя">
           <datalist id="format-suggestions"></datalist>
+          <datalist id="name-suggestions"></datalist>
+          <datalist id="surname-suggestions"></datalist>
+          <datalist id="fio-suggestions"></datalist>
         </div>
       </div>
       <div class="field">
@@ -184,7 +188,7 @@
     <div class="row2">
       <div class="field">
         <label>Имя / фамилия (можно одну букву)</label>
-        <input type="text" id="issue-f-query" placeholder="например: К или Кузнецова">
+        <input type="text" id="issue-f-query" list="fio-suggestions" placeholder="например: К или Кузнецова">
       </div>
       <div class="field">
         <label>Формат коробки</label>
@@ -214,6 +218,26 @@
     <div class="dup-list" id="duplicates-list"></div>
     <div class="modal-actions">
       <button type="button" class="btn btn-secondary" id="cancel-duplicates-modal">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- STATS MODAL -->
+<div class="modal-overlay hidden" id="stats-modal-overlay">
+  <div class="modal modal-wide">
+    <h2>📊 Статистика ПВЗ</h2>
+    <div class="sub">Приём и выдача по дням — чтобы видеть, склад разгружается или копится.</div>
+    <div class="field" style="margin-bottom:6px;">
+      <label>Период</label>
+      <select id="stats-period">
+        <option value="7">7 дней</option>
+        <option value="14" selected>14 дней</option>
+        <option value="30">30 дней</option>
+      </select>
+    </div>
+    <div id="stats-modal-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="cancel-stats-modal">Закрыть</button>
     </div>
   </div>
 </div>
