@@ -355,6 +355,17 @@ function initApp(){
     showToast._t = setTimeout(()=>t.classList.remove('show'), 4500);
   }
 
+  // Автодополнение: собираем уникальные имена и фамилии из уже сохранённых коробок
+  // и обновляем datalist'ы, которые видят поля поиска и формы добавления/редактирования.
+  function refreshNameSuggestions(){
+    const names = [...new Set(boxes.map(b=>(b.name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+    const surnames = [...new Set(boxes.map(b=>(b.surname||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+    const fio = [...new Set([...names, ...surnames])].sort((a,b)=>a.localeCompare(b,'ru'));
+    document.getElementById('name-suggestions').innerHTML = names.map(n=>`<option value="${escapeHtml(n)}">`).join('');
+    document.getElementById('surname-suggestions').innerHTML = surnames.map(n=>`<option value="${escapeHtml(n)}">`).join('');
+    document.getElementById('fio-suggestions').innerHTML = fio.map(n=>`<option value="${escapeHtml(n)}">`).join('');
+  }
+
   /* ================= RENDER: STATS ================= */
   function renderStats(){
     const stored = boxes.filter(b=>b.status==='stored').length;
@@ -454,7 +465,7 @@ function initApp(){
     const usedFormats = [...new Set(boxes.map(b=>b.format).filter(Boolean))];
     const allFormats = [...new Set([...FORMAT_DEFAULTS, ...usedFormats])];
     wrap.innerHTML = `
-      <input type="text" id="filter-surname" value="${escapeHtml(state.filterSurname||'')}" placeholder="Фамилия на букву…">
+      <input type="text" id="filter-surname" list="surname-suggestions" value="${escapeHtml(state.filterSurname||'')}" placeholder="Фамилия на букву…">
       <select id="filter-room">
         <option value="">Все комнаты</option>
         ${ROOMS.map(r=>`<option value="${r.id}" ${state.filterRoom===r.id?'selected':''}>${r.icon} ${r.name}</option>`).join('')}
@@ -698,18 +709,20 @@ function initApp(){
 
   // При выборе комнаты автоматически проставляем связанный с ней тег
   // (только для комнат из ROOM_TO_COND — остальные не трогаем).
-  document.getElementById('f-room').addEventListener('change', e=>{
-    const cid = ROOM_TO_COND[e.target.value];
+  function applyRoomTag(roomId){
+    const cid = ROOM_TO_COND[roomId];
     if(cid && !state.formConditions.has(cid)){
       state.formConditions.add(cid);
       refreshCondUI();
       refreshSuggestBox();
     }
-  });
+  }
+  document.getElementById('f-room').addEventListener('change', e=>applyRoomTag(e.target.value));
 
   function populateStaticFormBits(){
     const roomSel = document.getElementById('f-room');
-    roomSel.innerHTML = ROOMS.map(r=>`<option value="${r.id}">${r.icon} ${r.name}</option>`).join('');
+    roomSel.innerHTML = '<option value="">— Выберите комнату —</option>' +
+      ROOMS.map(r=>`<option value="${r.id}">${r.icon} ${r.name}</option>`).join('');
 
     const dl = document.getElementById('format-suggestions');
     const usedFormats = [...new Set(boxes.map(b=>b.format).filter(Boolean))];
@@ -790,7 +803,8 @@ function initApp(){
     }else{
       form.reset();
       state.formConditions = new Set();
-      document.getElementById('f-room').value = presetRoom || ROOMS[0].id;
+      document.getElementById('f-room').value = presetRoom || '';
+      if(presetRoom) applyRoomTag(presetRoom);
       document.getElementById('f-status').value = 'stored';
     }
     refreshCondUI();
@@ -811,7 +825,11 @@ function initApp(){
     const format = document.getElementById('f-format').value.trim();
     const note = document.getElementById('f-note').value.trim();
     const status = document.getElementById('f-status').value; // stored | pending
-    if((!name && !surname) || !room){
+    if(!room){
+      showToast('Выберите комнату для коробки');
+      return;
+    }
+    if(!name && !surname){
       showToast('Укажите хотя бы имя или фамилию');
       return;
     }
@@ -1035,6 +1053,118 @@ function initApp(){
   duplicatesOverlay.addEventListener('click', e=>{ if(e.target===duplicatesOverlay) closeDuplicatesModal(); });
   document.addEventListener('keydown', e=>{ if(e.key==='Escape' && !duplicatesOverlay.classList.contains('hidden')) closeDuplicatesModal(); });
 
+  /* ================= СТАТИСТИКА ПВЗ ================= */
+  const statsOverlay = document.getElementById('stats-modal-overlay');
+
+  // Считаем приём/выдачу по дням за последние N дней.
+  // "Принято" — по дате создания карточки (кроме ещё не принятых), "выдано" — по дате выдачи.
+  function computeDailyFlowStats(days){
+    const buckets = [];
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    for(let i=days-1; i>=0; i--){
+      const d = new Date(today);
+      d.setDate(d.getDate()-i);
+      buckets.push({date:d, key:d.toISOString().slice(0,10), received:0, issued:0});
+    }
+    const byKey = Object.fromEntries(buckets.map(b=>[b.key,b]));
+    boxes.forEach(b=>{
+      if(b.status!=='pending' && b.createdAt){
+        const key = b.createdAt.slice(0,10);
+        if(byKey[key]) byKey[key].received++;
+      }
+      if(b.status==='issued' && b.issuedAt){
+        const key = b.issuedAt.slice(0,10);
+        if(byKey[key]) byKey[key].issued++;
+      }
+    });
+    return buckets;
+  }
+
+  function shortDateLabel(d){
+    return d.toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit'});
+  }
+
+  function renderStatsModal(){
+    const days = parseInt(document.getElementById('stats-period').value, 10) || 14;
+    const buckets = computeDailyFlowStats(days);
+    const totalReceived = buckets.reduce((s,b)=>s+b.received, 0);
+    const totalIssued = buckets.reduce((s,b)=>s+b.issued, 0);
+    const net = totalReceived - totalIssued;
+    const storedNow = boxes.filter(b=>b.status==='stored').length;
+    const pendingNow = boxes.filter(b=>b.status==='pending').length;
+    const maxVal = Math.max(1, ...buckets.map(b=>Math.max(b.received, b.issued)));
+
+    // Порог "баланса" — небольшая разница на фоне общего потока не считается трендом.
+    const threshold = Math.max(2, Math.round((totalReceived+totalIssued) * 0.08));
+    let verdictClass, verdictText;
+    if(Math.abs(net) <= threshold){
+      verdictClass = 'balance';
+      verdictText = `⚖️ Баланс — за ${days} дн. приём и выдача примерно равны, склад не растёт и не разгружается.`;
+    }else if(net > 0){
+      verdictClass = 'growing';
+      verdictText = `📈 Склад копится — за ${days} дн. приняли на ${net} больше, чем выдали. Стоит поднажать с выдачей.`;
+    }else{
+      verdictClass = 'shrinking';
+      verdictText = `📉 Склад разгружается — за ${days} дн. выдали на ${Math.abs(net)} больше, чем приняли.`;
+    }
+
+    const chartBars = buckets.map(b=>{
+      const rH = Math.round((b.received/maxVal)*100);
+      const iH = Math.round((b.issued/maxVal)*100);
+      const showLabel = days<=14 || b.date.getDay()===1; // на длинных периодах подписываем только понедельники
+      return `
+        <div class="flow-day" title="${shortDateLabel(b.date)}: принято ${b.received}, выдано ${b.issued}">
+          <div class="flow-bars">
+            <div class="flow-bar received" style="height:${rH}%"></div>
+            <div class="flow-bar issued" style="height:${iH}%"></div>
+          </div>
+          <div class="flow-day-label">${showLabel ? shortDateLabel(b.date) : ''}</div>
+        </div>`;
+    }).join('');
+
+    document.getElementById('stats-modal-body').innerHTML = `
+      <div class="flow-verdict ${verdictClass}">${verdictText}</div>
+      <div class="flow-summary">
+        <div class="flow-summary-card">
+          <span class="flow-summary-num">${storedNow}</span>
+          <span class="flow-summary-label">📦 В хранении сейчас</span>
+        </div>
+        <div class="flow-summary-card">
+          <span class="flow-summary-num">${totalReceived}</span>
+          <span class="flow-summary-label">📥 Принято за ${days} дн.</span>
+        </div>
+        <div class="flow-summary-card">
+          <span class="flow-summary-num">${totalIssued}</span>
+          <span class="flow-summary-label">✅ Выдано за ${days} дн.</span>
+        </div>
+        <div class="flow-summary-card">
+          <span class="flow-summary-num">${pendingNow}</span>
+          <span class="flow-summary-label">⏳ Ждут приёма сейчас</span>
+        </div>
+      </div>
+      <div class="flow-legend">
+        <span><i class="flow-swatch received"></i> Принято</span>
+        <span><i class="flow-swatch issued"></i> Выдано</span>
+      </div>
+      <div class="flow-chart">${chartBars}</div>
+    `;
+  }
+
+  function openStatsModal(){
+    renderStatsModal();
+    statsOverlay.classList.remove('hidden');
+  }
+  function closeStatsModal(){
+    statsOverlay.classList.add('hidden');
+  }
+
+  document.getElementById('open-stats-modal').addEventListener('click', openStatsModal);
+  document.getElementById('cancel-stats-modal').addEventListener('click', closeStatsModal);
+  document.getElementById('stats-period').addEventListener('change', renderStatsModal);
+  statsOverlay.addEventListener('click', e=>{ if(e.target===statsOverlay) closeStatsModal(); });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape' && !statsOverlay.classList.contains('hidden')) closeStatsModal(); });
+
   /* ================= TABS / VIEW ================= */
   function setView(view){
     state.view = view;
@@ -1136,6 +1266,7 @@ function initApp(){
   /* ================= INIT ================= */
   function renderAll(){
     renderStats();
+    refreshNameSuggestions();
     if(state.view==='rooms'){
       const activeSub = document.querySelector('.subtab-btn.active');
       if(activeSub && activeSub.dataset.sub==='wall') renderRooms();
