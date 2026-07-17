@@ -398,6 +398,44 @@
   .dup-card .conditions{display:flex; flex-wrap:wrap; gap:5px; flex:1;}
   .dup-card .dup-pick-btn{padding:7px 12px; font-size:12px; white-space:nowrap;}
 
+  .btn-stats{background:var(--sage); box-shadow:0 3px 0 #4a6740;}
+  .btn-stats:hover{background:#6d9260;}
+
+  .flow-verdict{
+    border-radius:10px; padding:12px 16px; font-size:13.5px; font-weight:700;
+    margin-bottom:14px; line-height:1.4;
+  }
+  .flow-verdict.balance{background:#e8eef7; color:var(--navy-light);}
+  .flow-verdict.growing{background:#fdf1dc; color:var(--twine);}
+  .flow-verdict.shrinking{background:#e4efe0; color:var(--sage);}
+
+  .flow-summary{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(120px,1fr)); gap:10px;
+    margin-bottom:16px;
+  }
+  .flow-summary-card{
+    background:var(--paper); border-radius:10px; padding:12px 10px; text-align:center;
+  }
+  .flow-summary-num{display:block; font-family:var(--font-display); font-size:22px; color:var(--navy);}
+  .flow-summary-label{display:block; font-size:11px; color:var(--ink-soft); margin-top:2px;}
+
+  .flow-legend{display:flex; gap:16px; font-size:12px; color:var(--ink-soft); margin-bottom:8px;}
+  .flow-legend span{display:flex; align-items:center; gap:6px;}
+  .flow-swatch{width:10px; height:10px; border-radius:3px; display:inline-block;}
+  .flow-swatch.received{background:var(--sage);}
+  .flow-swatch.issued{background:var(--sky);}
+
+  .flow-chart{
+    display:flex; align-items:flex-end; gap:4px; height:150px;
+    background:var(--paper); border-radius:10px; padding:12px 10px 6px;
+  }
+  .flow-day{flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:4px; height:100%;}
+  .flow-bars{flex:1; display:flex; align-items:flex-end; gap:2px; width:100%;}
+  .flow-bar{flex:1; border-radius:2px 2px 0 0; min-height:2px;}
+  .flow-bar.received{background:var(--sage);}
+  .flow-bar.issued{background:var(--sky);}
+  .flow-day-label{font-size:8.5px; color:var(--ink-soft); font-family:var(--font-mono); white-space:nowrap;}
+
   .modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:20px;}
   .btn-secondary{background:var(--paper-dark); color:var(--ink);}
   .btn-secondary:hover{background:var(--paper-darker);}
@@ -432,4 +470,7 @@
     .issue-result-card .issue-pick-btn{width:100%; justify-content:center;}
     .dup-card{flex-direction:column; align-items:stretch;}
     .dup-card .dup-pick-btn{width:100%; justify-content:center;}
+    .flow-chart{overflow-x:auto;}
+    .flow-day{min-width:22px;}
+    .flow-summary{grid-template-columns:repeat(2, 1fr);}
   }
